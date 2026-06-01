@@ -1,0 +1,189 @@
+# .github/workflows/ci.yml
+# ─────────────────────────────────────────────────────────────
+# CI Pipeline — Runs on every push and pull request
+# Stages: Lint → Unit Tests → Integration Tests → Build Check
+# ─────────────────────────────────────────────────────────────
+
+name: CI — Lint, Test, Build
+
+on:
+  push:
+    branches: ['**']          # All branches
+  pull_request:
+    branches: [main, develop]
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ──────────────────────────────────────────
+  # Job 1: Lint (fast fail — runs first)
+  # ──────────────────────────────────────────
+  lint:
+    name: 🔍 Lint & Code Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: src/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: src/frontend
+
+      - name: Run ESLint
+        run: npm run lint
+        working-directory: src/frontend
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python lint tools
+        run: pip install flake8 black isort
+
+      - name: Run Flake8
+        run: flake8 src/backend --max-line-length=100 --exclude=venv,migrations
+
+      - name: Check Black formatting
+        run: black --check src/backend
+
+  # ──────────────────────────────────────────
+  # Job 2: Backend Tests
+  # ──────────────────────────────────────────
+  backend-tests:
+    name: 🧪 Backend Tests
+    runs-on: ubuntu-latest
+    needs: lint
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        working-directory: src/backend
+
+      - name: Run tests with coverage
+        env:
+          DATABASE_URL: postgresql://testuser:testpass@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test_secret_key_ci
+          NODE_ENV: test
+        run: pytest tests/ -v --cov=src --cov-report=xml --cov-report=term
+        working-directory: src/backend
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: src/backend/coverage.xml
+
+  # ──────────────────────────────────────────
+  # Job 3: Frontend Tests
+  # ──────────────────────────────────────────
+  frontend-tests:
+    name: 🎨 Frontend Tests
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: src/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: src/frontend
+
+      - name: Run Jest tests
+        run: npm test -- --coverage --watchAll=false --ci
+        working-directory: src/frontend
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v3
+        with:
+          name: frontend-coverage
+          path: src/frontend/coverage/
+
+  # ──────────────────────────────────────────
+  # Job 4: Docker Build Check
+  # ──────────────────────────────────────────
+  docker-build:
+    name: 🐳 Docker Build Verification
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: src/backend
+          file: src/Dockerfile
+          push: false
+          tags: ${{ env.IMAGE_NAME }}/backend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build frontend image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: src/frontend
+          file: src/Dockerfile.frontend
+          push: false
+          tags: ${{ env.IMAGE_NAME }}/frontend:${{ github.sha }}

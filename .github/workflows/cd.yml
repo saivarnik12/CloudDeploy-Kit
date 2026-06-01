@@ -1,0 +1,181 @@
+# .github/workflows/cd.yml
+# ─────────────────────────────────────────────────────────────
+# CD Pipeline — Deploy to production on merge to main
+# Stages: Build → Push to Registry → Deploy → Health Check → Rollback?
+# ─────────────────────────────────────────────────────────────
+
+name: CD — Build, Push, Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:           # Allow manual trigger from GitHub UI
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options: [production, staging]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ──────────────────────────────────────────
+  # Job 1: Build & Push Docker Images
+  # ──────────────────────────────────────────
+  build-and-push:
+    name: 🏗️ Build & Push Images
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate version tag
+        id: version
+        run: |
+          VERSION="${GITHUB_SHA::8}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "📦 Building version: ${VERSION}"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=,format=short
+            type=ref,event=branch
+            latest
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: src/backend
+          file: src/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VCS_REF=${{ github.sha }}
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: src/frontend
+          file: src/Dockerfile.frontend
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ──────────────────────────────────────────
+  # Job 2: Deploy to Production
+  # ──────────────────────────────────────────
+  deploy:
+    name: 🚀 Deploy to Production
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment:
+      name: production
+      url: https://yourdomain.com
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          port: ${{ secrets.PROD_SSH_PORT }}
+          script: |
+            set -e
+            echo "🚀 Deploying version ${{ needs.build-and-push.outputs.version }}"
+
+            # Pull latest scripts
+            cd /opt/app
+            git pull origin main
+
+            # Run deployment script
+            ./scripts/deploy.sh production ${{ needs.build-and-push.outputs.version }}
+
+            echo "✅ Deployment complete"
+
+  # ──────────────────────────────────────────
+  # Job 3: Post-Deploy Health Check
+  # ──────────────────────────────────────────
+  health-check:
+    name: 🏥 Post-Deploy Health Check
+    runs-on: ubuntu-latest
+    needs: deploy
+
+    steps:
+      - name: Wait for services to stabilize
+        run: sleep 30
+
+      - name: Check API health endpoint
+        run: |
+          MAX_RETRIES=5
+          RETRY_DELAY=10
+          for i in $(seq 1 $MAX_RETRIES); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://yourdomain.com/health)
+            if [ "$STATUS" -eq 200 ]; then
+              echo "✅ Health check passed (HTTP $STATUS)"
+              exit 0
+            fi
+            echo "⏳ Attempt $i/$MAX_RETRIES — HTTP $STATUS. Retrying in ${RETRY_DELAY}s..."
+            sleep $RETRY_DELAY
+          done
+          echo "❌ Health check FAILED after $MAX_RETRIES attempts"
+          exit 1
+
+      - name: Trigger rollback on failure
+        if: failure()
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          script: |
+            echo "🔄 Health check failed — initiating rollback"
+            cd /opt/app && ./scripts/rollback.sh
+
+  # ──────────────────────────────────────────
+  # Job 4: Notify deployment result
+  # ──────────────────────────────────────────
+  notify:
+    name: 📢 Notify Deployment
+    runs-on: ubuntu-latest
+    needs: [deploy, health-check]
+    if: always()
+
+    steps:
+      - name: Notify Slack
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: |
+            Deployment ${{ needs.health-check.result == 'success' && '✅ succeeded' || '❌ FAILED' }}
+            Version: ${{ needs.build-and-push.outputs.version }}
+            Triggered by: ${{ github.actor }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
