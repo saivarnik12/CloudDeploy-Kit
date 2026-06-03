@@ -1,131 +1,156 @@
 # CloudDeploy Kit ☁️
 
-> A production-ready DevOps infrastructure project featuring CI/CD pipelines, Docker containerization, Nginx reverse proxy, health monitoring, and automated deployment scripts.
+> A production-ready DevOps infrastructure project featuring CI/CD pipelines, Docker containerization, Nginx reverse proxy, health monitoring, SSL automation, and zero-downtime blue-green deployments.
 
-![Docker](https://img.shields.io/badge/Docker-24.x-blue) ![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-CI%2FCD-green) ![Nginx](https://img.shields.io/badge/Nginx-1.25-red) ![Shell](https://img.shields.io/badge/Shell-Bash-yellow)
+![Docker](https://img.shields.io/badge/Docker-24.x-blue)
+![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-CI%2FCD-green)
+![Nginx](https://img.shields.io/badge/Nginx-1.25-red)
+![Node.js](https://img.shields.io/badge/Node.js-18-brightgreen)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-blue)
+![Redis](https://img.shields.io/badge/Redis-7-red)
 
----
-
-## 📌 Overview
-
-CloudDeploy Kit is a **DevOps infrastructure project** that demonstrates how to containerize a full-stack application, set up automated CI/CD pipelines, configure a production-grade Nginx reverse proxy, implement health monitoring, and automate deployments with zero-downtime rolling updates.
-
-### This project demonstrates:
-- **Docker & Docker Compose** — multi-service containerization
-- **CI/CD Pipelines** — GitHub Actions (lint → test → build → deploy)
-- **Nginx Configuration** — reverse proxy, SSL termination, rate limiting
-- **Health Monitoring** — service health checks, uptime scripts
-- **Zero-Downtime Deployment** — blue-green deployment strategy
-- **Security Hardening** — Docker best practices, non-root users
-- **Infrastructure as Code** — environment-specific configs
-- **Shell Scripting** — deploy, rollback, health-check automation
+**Live Demo:** [saivarnik12.github.io/CloudDeploy-Kit](https://saivarnik12.github.io/CloudDeploy-Kit/)
 
 ---
 
-## 🛠️ Tech Stack
+## What's in this project
 
-| Component | Technology |
-|-----------|-----------|
-| Containerization | Docker 24, Docker Compose v3.8 |
-| CI/CD | GitHub Actions |
-| Reverse Proxy | Nginx 1.25 |
-| Process Manager | Docker health checks |
-| Monitoring | Custom shell health scripts |
-| Secrets Management | GitHub Secrets + .env files |
-| Registry | Docker Hub / GitHub Container Registry |
-
----
-
-## ✨ Features
-
-- ✅ Multi-stage Docker builds (smaller, secure images)
-- ✅ GitHub Actions CI/CD pipeline (4 stages)
-- ✅ Nginx reverse proxy with load balancing config
-- ✅ SSL/TLS configuration (Let's Encrypt ready)
-- ✅ Rate limiting and DDoS basic protection in Nginx
-- ✅ Zero-downtime blue-green deployment script
-- ✅ Automated rollback on failed health check
-- ✅ Service health monitoring script with alerting
-- ✅ Docker security best practices (non-root, read-only FS)
-- ✅ Environment-specific configs (dev / staging / prod)
+| Component | Status | Details |
+|---|---|---|
+| Docker | ✅ Present | Multi-stage prod + dev Dockerfiles |
+| Nginx | ✅ Present | Reverse proxy, SSL, rate limiting |
+| GitHub Actions | ✅ Present | CI + CD + GitHub Pages pipelines |
+| Deploy Scripts | ✅ Present | Blue-green deploy, rollback, health check |
+| Application Code | ✅ Added | Node.js/Express REST API, JWT auth, tasks CRUD |
+| Monitoring | ✅ Added | Uptime monitor, Prometheus, alert rules |
+| SSL Automation | ✅ Added | Let's Encrypt via Certbot + auto-renewal cron |
+| Environment Configs | ✅ Added | dev / staging / production .env templates |
+| Dev/Test Compose | ✅ Added | Hot reload dev, isolated test environment |
+| Architecture Diagram | ✅ Added | Mermaid diagram in docs/ |
+| GitHub Pages Demo | ✅ Added | docs/index.html with auto-deploy workflow |
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
+### Development (hot reload)
 ```bash
 git clone https://github.com/yourusername/clouddeploy-kit.git
 cd clouddeploy-kit
 
-# Development
+# Start dev (hot reload, pgAdmin :5050, Redis Commander :8081)
 docker-compose -f docker-compose.dev.yml up --build
 
-# Production (requires .env.prod)
+# With debug tools
+docker-compose -f docker-compose.dev.yml --profile tools up
+```
+
+### Run Tests
+```bash
+docker-compose -f docker-compose.test.yml up --abort-on-container-exit
+```
+
+### Production Deploy
+```bash
+# 1. Bootstrap VPS (run once on a fresh Ubuntu server)
+sudo bash scripts/setup-server.sh
+
+# 2. Get SSL certificate
+./scripts/ssl-setup.sh obtain yourdomain.com admin@yourdomain.com
+
+# 3. Deploy
 ./scripts/deploy.sh production v1.0.0
 
-# Health check
+# 4. Health check
 ./scripts/health-check.sh
 
-# Rollback
-./scripts/rollback.sh
+# 5. Rollback if needed
+./scripts/rollback.sh production
 ```
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
-clouddeploy-kit/
-├── .github/
-│   └── workflows/
-│       ├── ci.yml              # CI: lint + test on every PR
-│       └── cd.yml              # CD: build + deploy on main merge
+CloudDeploy-Kit/
+├── .github/workflows/
+│   ├── ci.yml                  # lint + test on every PR
+│   ├── cd.yml                  # build + deploy on main merge
+│   └── pages.yml               # GitHub Pages deployment
+├── app/                        # ← Application code
+│   ├── src/
+│   │   ├── server.js           # Express entry point
+│   │   ├── routes/             # health, auth, tasks
+│   │   └── middleware/         # auth JWT, errorHandler, logger
+│   ├── database/schema.sql     # users + tasks tables
+│   └── package.json
 ├── src/
-│   ├── Dockerfile              # Multi-stage production Dockerfile
-│   └── Dockerfile.dev          # Development Dockerfile
+│   ├── Dockerfile              # Multi-stage production
+│   └── Dockerfile.dev          # Dev with hot reload
 ├── nginx/
-│   ├── nginx.conf              # Main Nginx config
-│   └── conf.d/
-│       └── app.conf            # App-specific reverse proxy config
+│   ├── nginx.conf              # Worker config, gzip, logging
+│   └── conf.d/app.conf         # SSL, proxy, rate limiting
 ├── scripts/
-│   ├── deploy.sh               # Zero-downtime deployment
-│   ├── rollback.sh             # Quick rollback to previous version
-│   ├── health-check.sh         # Service health verification
-│   └── setup-server.sh         # One-time server bootstrap
+│   ├── deploy.sh               # Zero-downtime blue-green deploy
+│   ├── rollback.sh             # Revert to previous version
+│   ├── health-check.sh         # Verify all services
+│   ├── ssl-setup.sh            # Let's Encrypt automation
+│   └── setup-server.sh         # One-time VPS bootstrap
 ├── monitoring/
-│   └── uptime-monitor.sh       # Continuous health monitoring loop
-├── docker-compose.yml          # Production compose
-├── docker-compose.dev.yml      # Development compose
-├── docker-compose.test.yml     # Test environment compose
+│   ├── uptime-monitor.sh       # Continuous polling + Slack alerts
+│   ├── prometheus.yml          # Prometheus scrape config
+│   └── alert_rules.yml         # Alert definitions
+├── environments/
+│   ├── .env.development
+│   ├── .env.staging
+│   └── .env.production         # Template — use GitHub Secrets for real values
+├── docs/
+│   ├── index.html              # GitHub Pages demo
+│   └── architecture.mermaid    # System architecture
+├── docker-compose.yml          # Production
+├── docker-compose.dev.yml      # Development
+├── docker-compose.test.yml     # Isolated CI tests
 └── README.md
 ```
 
 ---
 
-## 🔄 CI/CD Pipeline
+## CI/CD Pipeline
 
 ```
-Push to feature branch
-       │
-       ▼
-┌──────────────┐
-│   CI Pipeline │
-│  lint + test  │  ← Runs on every push/PR
-└──────┬───────┘
-       │
-   Merge to main
-       │
-       ▼
-┌──────────────┐
-│  CD Pipeline  │
-│ build image   │
-│ push registry │
-│ deploy prod   │  ← Zero-downtime rolling update
-│ health check  │
-│ rollback?     │
-└──────────────┘
+Push → lint → test (docker-compose.test.yml) → docker build
+     → push GHCR → ssh VPS → deploy.sh (blue-green swap)
+     → health check → [pass] done | [fail] auto rollback
 ```
 
 ---
 
-## 📄 License — MIT
+## Blue-Green Deployment
+
+`deploy.sh` implements zero-downtime deploys:
+1. Pull new image from GHCR
+2. Start green container on port 5001
+3. Health check green (retry 10× / 5s)
+4. Pass: reload Nginx upstream → switch traffic to green → stop blue
+5. Fail: stop green, blue keeps serving — zero downtime
+
+---
+
+## API Endpoints
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | /health | — | Liveness probe |
+| GET | /health/ready | — | Readiness (DB + Redis check) |
+| POST | /api/auth/register | — | Create account |
+| POST | /api/auth/login | — | Login → JWT tokens |
+| POST | /api/auth/refresh | — | Refresh access token |
+| GET | /api/tasks | Bearer | List tasks (paginated) |
+| POST | /api/tasks | Bearer | Create task |
+| PUT | /api/tasks/:id | Bearer | Update task |
+| DELETE | /api/tasks/:id | Bearer | Delete task |
+
+---
+
+## License — MIT

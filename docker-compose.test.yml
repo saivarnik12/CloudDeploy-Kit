@@ -1,0 +1,67 @@
+version: '3.8'
+
+# ─────────────────────────────────────────────────────────────
+# Test Environment Docker Compose
+# - Used in CI (GitHub Actions) and local test runs
+# - Isolated test database (separate from dev)
+# - No ports exposed to host (all internal)
+# ─────────────────────────────────────────────────────────────
+
+services:
+  backend_test:
+    build:
+      context: .
+      dockerfile: src/Dockerfile.dev
+    container_name: backend_test
+    command: npm test
+    environment:
+      - NODE_ENV=test
+      - PORT=5000
+      - DATABASE_URL=postgresql://testuser:testpass@postgres_test:5432/testdb
+      - REDIS_URL=redis://redis_test:6379
+      - JWT_SECRET=test-jwt-secret
+      - JWT_REFRESH_SECRET=test-refresh-secret
+    depends_on:
+      postgres_test:
+        condition: service_healthy
+      redis_test:
+        condition: service_healthy
+    networks:
+      - test_network
+    volumes:
+      - ./app:/app:ro
+      - /app/node_modules
+
+  postgres_test:
+    image: postgres:15-alpine
+    container_name: postgres_test
+    environment:
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+      POSTGRES_DB: testdb
+    volumes:
+      - ./app/database/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    networks:
+      - test_network
+    tmpfs:
+      - /var/lib/postgresql/data   # In-memory DB for speed
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  redis_test:
+    image: redis:7-alpine
+    container_name: redis_test
+    networks:
+      - test_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 5
+
+networks:
+  test_network:
+    driver: bridge

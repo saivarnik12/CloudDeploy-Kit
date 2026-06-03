@@ -1,0 +1,30 @@
+# src/Dockerfile.dev
+# ─────────────────────────────────────────────────────────────
+# Development Dockerfile
+# - No multi-stage (faster rebuild)
+# - Hot reload via nodemon
+# - Dev dependencies included
+# ─────────────────────────────────────────────────────────────
+
+FROM node:18-alpine
+
+# Install dev utilities
+RUN apk add --no-cache curl bash
+
+WORKDIR /app
+
+# Install ALL deps (including dev)
+COPY app/package*.json ./
+RUN npm install
+
+# Source code is volume-mounted in dev (live reload)
+# COPY is intentionally NOT here — see docker-compose.dev.yml
+
+EXPOSE 5000
+
+# Healthcheck for Docker Compose dependency
+HEALTHCHECK --interval=15s --timeout=5s --start-period=15s --retries=3 \
+  CMD curl -f http://localhost:5000/health || exit 1
+
+# Hot reload
+CMD ["npx", "nodemon", "--watch", "src", "src/server.js"]

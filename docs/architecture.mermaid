@@ -1,0 +1,93 @@
+---
+title: CloudDeploy Kit — System Architecture
+---
+
+flowchart TB
+    subgraph Internet["🌐 Internet"]
+        USER[👤 User / Browser]
+        GHA[⚙️ GitHub Actions]
+        GHCR[📦 GitHub Container Registry]
+    end
+
+    subgraph VPS["🖥️ Production VPS / Cloud Server"]
+        direction TB
+
+        subgraph Ingress["Ingress Layer"]
+            UFW[🔥 UFW Firewall\n:80 / :443 only]
+            NGINX[🔀 Nginx\nReverse Proxy + SSL\nRate Limiting + Gzip]
+        end
+
+        subgraph AppLayer["Application Layer  (Docker Network: app_network)"]
+            direction LR
+            BLUE[🟦 Backend Blue\nNode.js :5000]
+            GREEN[🟩 Backend Green\nNode.js :5001]
+        end
+
+        subgraph DataLayer["Data Layer"]
+            direction LR
+            POSTGRES[(🐘 PostgreSQL 15\nUsers + Tasks)]
+            REDIS[(🔴 Redis 7\nCache + Sessions)]
+        end
+
+        subgraph Monitoring["Monitoring"]
+            UPTIME[📊 Uptime Monitor\nShell Script]
+            PROMETHEUS[📈 Prometheus]
+            ALERTMGR[🔔 Alertmanager\nSlack / Email]
+        end
+
+        subgraph SSL["SSL / TLS"]
+            CERTBOT[🔐 Certbot\nLet's Encrypt]
+        end
+    end
+
+    subgraph CICD["CI/CD Pipeline (GitHub Actions)"]
+        direction LR
+        LINT[🔍 Lint]
+        TEST[🧪 Test\ndocker-compose.test.yml]
+        BUILD[🔨 Build\nMulti-stage Docker]
+        PUSH[⬆️ Push\nGHCR]
+        DEPLOY[🚀 Deploy\nBlue-Green]
+        HCHECK[✅ Health\nCheck]
+        ROLLBACK[↩️ Rollback\nif failed]
+    end
+
+    %% Traffic flow
+    USER -->|HTTPS :443| UFW
+    UFW --> NGINX
+    NGINX -->|/api/*| BLUE
+    NGINX -.->|Blue-Green switch| GREEN
+
+    %% Data connections
+    BLUE --> POSTGRES
+    BLUE --> REDIS
+    GREEN --> POSTGRES
+    GREEN --> REDIS
+
+    %% CI/CD flow
+    GHA --> LINT --> TEST --> BUILD --> PUSH --> GHCR
+    GHCR --> DEPLOY --> HCHECK
+    HCHECK -->|fail| ROLLBACK
+    HCHECK -->|pass| NGINX
+
+    %% SSL
+    CERTBOT -.->|certs volume| NGINX
+
+    %% Monitoring
+    UPTIME -->|polls| NGINX
+    PROMETHEUS -->|scrapes| BLUE
+    PROMETHEUS --> ALERTMGR
+
+    %% Styling
+    classDef internet  fill:#e3f2fd,stroke:#1565c0
+    classDef ingress   fill:#f3e5f5,stroke:#6a1b9a
+    classDef app       fill:#e8f5e9,stroke:#2e7d32
+    classDef data      fill:#fff3e0,stroke:#e65100
+    classDef cicd      fill:#fce4ec,stroke:#880e4f
+    classDef monitor   fill:#f1f8e9,stroke:#558b2f
+
+    class USER,GHA,GHCR internet
+    class UFW,NGINX ingress
+    class BLUE,GREEN app
+    class POSTGRES,REDIS data
+    class LINT,TEST,BUILD,PUSH,DEPLOY,HCHECK,ROLLBACK cicd
+    class UPTIME,PROMETHEUS,ALERTMGR monitor
